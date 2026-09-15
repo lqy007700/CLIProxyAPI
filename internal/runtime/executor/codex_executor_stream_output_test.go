@@ -685,6 +685,8 @@ func TestCodexExecutorZeroTokenIncompleteStreamFailsOverToAnotherCredential(t *t
 		upstreamAuths = append(upstreamAuths, r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "text/event-stream")
 		if len(upstreamAuths) == 1 {
+			_, _ = w.Write([]byte(`data: {"type":"response.created","response":{"id":"resp-empty","status":"in_progress","output":[]}}` + "\n\n"))
+			_, _ = w.Write([]byte(`data: {"type":"response.in_progress","response":{"id":"resp-empty","status":"in_progress","output":[]}}` + "\n\n"))
 			_, _ = w.Write([]byte(`data: {"type":"response.incomplete","response":{"id":"resp-empty","status":"incomplete","output":[],"usage":{"input_tokens":10,"output_tokens":0,"total_tokens":10}}}` + "\n\n"))
 			return
 		}
@@ -695,7 +697,9 @@ func TestCodexExecutorZeroTokenIncompleteStreamFailsOverToAnotherCredential(t *t
 
 	manager := cliproxyauth.NewManager(nil, nil, nil)
 	manager.SetRetryConfig(0, 0, 0)
-	manager.RegisterExecutor(NewCodexExecutor(&config.Config{}))
+	manager.RegisterExecutor(NewCodexExecutor(&config.Config{
+		Codex: config.CodexConfig{StreamBootstrapBuffering: true},
+	}))
 	reg := registry.GetGlobalRegistry()
 	for _, id := range []string{authA, authB} {
 		reg.RegisterClient(id, "codex", []*registry.ModelInfo{{ID: model}})

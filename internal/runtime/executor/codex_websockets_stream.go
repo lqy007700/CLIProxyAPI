@@ -469,14 +469,16 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 				helps.RecordAPIWebsocketError(ctx, e.cfg, "upstream_error", streamErr)
 				reporter.PublishFailure(ctx, streamErr)
 				if sess != nil {
-					e.invalidateUpstreamConn(sess, conn, "terminal_empty_incomplete", streamErr)
-					sess.clearActive(conn, readCh)
 					unlockStreamSession()
+					e.invalidateUpstreamConnWithoutDisconnectNotify(sess, conn, "terminal_empty_incomplete", streamErr)
+					sess.clearActive(conn, readCh)
+					if isEphemeralSession {
+						closeCodexWebsocketSession(sess, "terminal_empty_incomplete")
+					}
 				} else if closer != nil {
 					_ = closer.Close()
 				}
-				bootstrapTerminalErr = streamErr
-				break
+				return nil, streamErr
 			}
 			if eventType == "response.output_item.done" {
 				collectCodexOutputItemDone(payload, outputItemsByIndex, &outputItemsFallback)

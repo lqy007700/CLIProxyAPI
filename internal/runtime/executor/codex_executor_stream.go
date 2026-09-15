@@ -231,13 +231,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					streamErr := newCodexEmptyIncompleteStreamError()
 					helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 					reporter.PublishFailure(ctx, streamErr)
-					// Not an overload rejection, so it keeps its in-stream delivery: flush what is
-					// held and hand the error downstream, matching the websocket executor and the
-					// contract that only overload and rate-limit rejections fail the attempt over.
-					// The conductor commits a stream once it has seen a payload, so this only takes
-					// effect for downstream formats that render the held frames into a chunk.
-					bootstrapTerminalErr = streamErr
-					break
+					return nil, streamErr
 				}
 				if isCodexBootstrapBufferableEvent(eventType, data) {
 					isHandshake = true

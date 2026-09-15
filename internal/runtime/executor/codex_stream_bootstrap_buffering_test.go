@@ -46,12 +46,12 @@ func codexTestAuth(baseURL string) *cliproxyauth.Auth {
 
 func codexTestRequest() (cliproxyexecutor.Request, cliproxyexecutor.Options) {
 	return cliproxyexecutor.Request{
-		Model:   "gpt-5.6-terra",
-		Payload: []byte(`{"model":"gpt-5.6-terra","input":"hello"}`),
-	}, cliproxyexecutor.Options{
-		SourceFormat: sdktranslator.FromString("openai-response"),
-		Stream:       true,
-	}
+			Model:   "gpt-5.6-terra",
+			Payload: []byte(`{"model":"gpt-5.6-terra","input":"hello"}`),
+		}, cliproxyexecutor.Options{
+			SourceFormat: sdktranslator.FromString("openai-response"),
+			Stream:       true,
+		}
 }
 
 // codexSSEServer streams the supplied event payloads as an HTTP 200 SSE response.
@@ -92,11 +92,11 @@ func codexWebsocketServer(t *testing.T, frames ...string) *httptest.Server {
 
 func codexWebsocketRequest() (cliproxyexecutor.Request, cliproxyexecutor.Options) {
 	return cliproxyexecutor.Request{
-		Model:   "gpt-5.6-terra",
-		Payload: []byte(`{"model":"gpt-5.6-terra","input":[{"type":"message","role":"user","content":"hello"}]}`),
-	}, cliproxyexecutor.Options{
-		SourceFormat: sdktranslator.FromString("openai-response"),
-	}
+			Model:   "gpt-5.6-terra",
+			Payload: []byte(`{"model":"gpt-5.6-terra","input":[{"type":"message","role":"user","content":"hello"}]}`),
+		}, cliproxyexecutor.Options{
+			SourceFormat: sdktranslator.FromString("openai-response"),
+		}
 }
 
 // drainChunks collects every payload and the first error from a stream result.
@@ -400,10 +400,9 @@ func TestCodexBootstrapBudgetsStaySmall(t *testing.T) {
 	}
 }
 
-// In-stream delivery depends on the held frames rendering to at least one downstream chunk: the
-// conductor commits a stream only once it has seen a non-empty payload, so against a format that
-// renders the handshake as nothing there is nothing to commit and the attempt still fails over.
-func TestCodexExecutor_BootstrapBuffering_InStreamDeliveryNeedsRenderedFrames(t *testing.T) {
+// Empty terminal responses must fail before stream commitment even when the downstream format
+// renders every held lifecycle frame as nothing.
+func TestCodexExecutor_BootstrapBuffering_EmptyIncompleteFailsBeforeCommitWithoutRenderedFrames(t *testing.T) {
 	incomplete := `{"type":"response.incomplete","response":{"id":"resp_1","output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}`
 	server := codexSSEServer(codexCreatedEvent, codexInProgressEvent, codexOutputAddedEvent, incomplete)
 	defer server.Close()
@@ -411,51 +410,31 @@ func TestCodexExecutor_BootstrapBuffering_InStreamDeliveryNeedsRenderedFrames(t 
 	req, _ := codexTestRequest()
 	opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("openai"), Stream: true}
 	result, err := NewCodexExecutor(codexBufferingConfig(true)).ExecuteStream(context.Background(), codexTestAuth(server.URL), req, opts)
-	if err != nil {
-		t.Fatalf("the executor still returns a stream; it is the conductor that cannot commit it: %v", err)
+	if err == nil {
+		t.Fatal("empty incomplete response must fail before stream commitment")
 	}
-	if result == nil {
-		t.Fatal("expected a stream result")
+	if result != nil {
+		t.Fatalf("stream result = %#v, want nil before credential failover", result)
 	}
-	combined, streamErr := drainChunks(result)
-	if streamErr == nil {
-		t.Fatal("expected the failure to arrive as an in-stream chunk error")
-	}
-	if combined != "" {
-		t.Fatalf("Chat Completions renders these frames as nothing, so no payload precedes the error: %q", combined)
+	if got := statusCodeFromTestError(t, err); got != http.StatusBadGateway {
+		t.Fatalf("status code = %d, want %d", got, http.StatusBadGateway)
 	}
 }
 
-// An empty response.incomplete is not an overload rejection, so it keeps its in-stream delivery:
-// the buffered frames are flushed and the error arrives as a chunk rather than burning another
-// credential. The websocket executor already routes this condition that way; both transports agree
-// on it. A truncated stream is deliberately left alone - both transports fail that one over.
-func TestCodexExecutor_BootstrapBuffering_NonOverloadTerminalStaysInStream(t *testing.T) {
-	cases := []struct{ name, tail string }{
-		{"empty incomplete", `{"type":"response.incomplete","response":{"id":"resp_1","output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}`},
+// Lifecycle frames are not semantic output. An empty terminal response after them must discard the
+// held frames and fail the attempt so the conductor can select another credential.
+func TestCodexExecutor_BootstrapBuffering_EmptyIncompleteDiscardsLifecycleFrames(t *testing.T) {
+	incomplete := `{"type":"response.incomplete","response":{"id":"resp_1","output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}`
+	server := codexSSEServer(codexCreatedEvent, codexInProgressEvent, codexOutputAddedEvent, incomplete)
+	defer server.Close()
+
+	req, opts := codexTestRequest()
+	result, err := NewCodexExecutor(codexBufferingConfig(true)).ExecuteStream(context.Background(), codexTestAuth(server.URL), req, opts)
+	if err == nil {
+		t.Fatal("empty incomplete response must fail before buffered lifecycle frames are committed")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			server := codexSSEServer(codexCreatedEvent, codexInProgressEvent, codexOutputAddedEvent, tc.tail)
-			defer server.Close()
-
-			req, opts := codexTestRequest()
-			result, err := NewCodexExecutor(codexBufferingConfig(true)).ExecuteStream(context.Background(), codexTestAuth(server.URL), req, opts)
-
-			if err != nil {
-				t.Fatalf("a non-overload terminal failure must not fail the attempt over: %v", err)
-			}
-			if result == nil {
-				t.Fatal("expected a stream result carrying the buffered frames and the error")
-			}
-			combined, streamErr := drainChunks(result)
-			if streamErr == nil {
-				t.Fatal("expected the failure to arrive as an in-stream chunk error")
-			}
-			if !strings.Contains(combined, `"type":"response.created"`) {
-				t.Fatalf("buffered frames must be flushed before the in-stream error: %s", combined)
-			}
-		})
+	if result != nil {
+		t.Fatalf("stream result = %#v, want nil before credential failover", result)
 	}
 }
 
@@ -1307,6 +1286,21 @@ func TestCodexWebsocketsExecutor_BootstrapOverload_DoesNotNotifyDownstreamDiscon
 	}
 	if notified {
 		t.Fatal("bootstrap overload must not signal a downstream disconnect: the conductor still has to retry on another credential, and signalling closes the client connection with zero frames delivered")
+	}
+}
+
+func TestCodexWebsocketsExecutor_EmptyIncomplete_DoesNotNotifyDownstreamDisconnect(t *testing.T) {
+	emptyIncomplete := `{"type":"response.incomplete","response":{"id":"resp_1","output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}`
+	notified, err := executeWebsocketStreamInSession(t, codexCreatedEvent, codexInProgressEvent, emptyIncomplete)
+
+	if err == nil {
+		t.Fatal("expected the empty incomplete response to fail the attempt")
+	}
+	if got := statusCodeFromTestError(t, err); got != http.StatusBadGateway {
+		t.Fatalf("status code = %d, want %d", got, http.StatusBadGateway)
+	}
+	if notified {
+		t.Fatal("empty incomplete failover must not close the downstream websocket")
 	}
 }
 
