@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/translator"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -661,6 +662,79 @@ func assertNotRequestScopedTestError(t *testing.T, err error) {
 	requestErr, ok := err.(interface{ IsRequestScoped() bool })
 	if ok && requestErr.IsRequestScoped() {
 		t.Fatalf("error %T is unexpectedly request-scoped: %v", err, err)
+	}
+}
+
+// An empty zero-token terminal response has no client output to preserve and must remain
+// eligible for conductor credential failover when it is observed before the first payload.
+func TestCodexEmptyIncompleteStreamErrorIsEligibleForCredentialFailover(t *testing.T) {
+	assertNotRequestScopedTestError(t, newCodexEmptyIncompleteStreamError())
+}
+
+func TestCodexExecutorZeroTokenIncompleteStreamFailsOverToAnotherCredential(t *testing.T) {
+	const (
+		model = "gpt-zero-token-failover"
+		authA = "codex-zero-token-failover-a"
+		authB = "codex-zero-token-failover-b"
+		keyA  = "zero-token-key-a"
+		keyB  = "zero-token-key-b"
+	)
+
+	var upstreamAuths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamAuths = append(upstreamAuths, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		if len(upstreamAuths) == 1 {
+			_, _ = w.Write([]byte(`data: {"type":"response.incomplete","response":{"id":"resp-empty","status":"incomplete","output":[],"usage":{"input_tokens":10,"output_tokens":0,"total_tokens":10}}}` + "\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"ok"}` + "\n\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.completed","response":{"id":"resp-ok","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11}}}` + "\n\n"))
+	}))
+	defer server.Close()
+
+	manager := cliproxyauth.NewManager(nil, nil, nil)
+	manager.SetRetryConfig(0, 0, 0)
+	manager.RegisterExecutor(NewCodexExecutor(&config.Config{}))
+	reg := registry.GetGlobalRegistry()
+	for _, id := range []string{authA, authB} {
+		reg.RegisterClient(id, "codex", []*registry.ModelInfo{{ID: model}})
+		t.Cleanup(func() { reg.UnregisterClient(id) })
+	}
+	for _, auth := range []*cliproxyauth.Auth{
+		{ID: authA, Provider: "codex", Status: cliproxyauth.StatusActive, Attributes: map[string]string{"base_url": server.URL, "api_key": keyA, "priority": "20"}},
+		{ID: authB, Provider: "codex", Status: cliproxyauth.StatusActive, Attributes: map[string]string{"base_url": server.URL, "api_key": keyB, "priority": "10"}},
+	} {
+		if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
+			t.Fatalf("register %s: %v", auth.ID, errRegister)
+		}
+	}
+
+	result, errExecute := manager.ExecuteStream(context.Background(), []string{"codex"}, cliproxyexecutor.Request{
+		Model:   model,
+		Payload: []byte(`{"model":"gpt-zero-token-failover","input":"hello"}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FromString("openai-response"),
+		ResponseFormat: sdktranslator.FromString("openai-response"),
+		Stream:         true,
+	})
+	if errExecute != nil {
+		t.Fatalf("ExecuteStream() error = %v", errExecute)
+	}
+	if result == nil {
+		t.Fatal("ExecuteStream() result is nil")
+	}
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected final stream error: %v", chunk.Err)
+		}
+	}
+
+	if len(upstreamAuths) != 2 {
+		t.Fatalf("upstream attempts = %d (%v), want first credential followed by fallback credential", len(upstreamAuths), upstreamAuths)
+	}
+	if upstreamAuths[0] != "Bearer "+keyA || upstreamAuths[1] != "Bearer "+keyB {
+		t.Fatalf("upstream authorization order = %v, want [%q %q]", upstreamAuths, "Bearer "+keyA, "Bearer "+keyB)
 	}
 }
 

@@ -31,6 +31,8 @@ func (codexIncompleteStreamError) IsRequestScoped() bool {
 	return true
 }
 
+// codexEmptyIncompleteStreamError represents an upstream credential or model failure before any
+// client output exists, so it remains eligible for credential failover.
 type codexEmptyIncompleteStreamError struct {
 	statusErr
 }
@@ -40,10 +42,6 @@ func newCodexEmptyIncompleteStreamError() codexEmptyIncompleteStreamError {
 		code: http.StatusBadGateway,
 		msg:  helps.CodexEmptyIncompleteStreamMessage,
 	}}
-}
-
-func (codexEmptyIncompleteStreamError) IsRequestScoped() bool {
-	return true
 }
 
 // Streamed Codex responses may emit response.output_item.done events while leaving
