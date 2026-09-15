@@ -309,6 +309,11 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 				if requestRetry, okRetry := authFileRequestRetryFromJSON(data); okRetry {
 					fileData["request_retry"] = requestRetry
 				}
+				for _, field := range []string{"max_concurrency", "max_waiting", "wait_timeout_ms"} {
+					if value := gjson.GetBytes(data, field); value.Exists() && value.Type == gjson.Number {
+						fileData[field] = int(value.Int())
+					}
+				}
 			}
 
 			files = append(files, fileData)
@@ -471,6 +476,20 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 	}
 	if requestRetry, ok := auth.RequestRetryOverride(); ok {
 		entry["request_retry"] = requestRetry
+	}
+	if limits, limited := coreauth.AccountConcurrencyLimitsFromAuth(auth); limited {
+		entry["max_concurrency"] = limits.MaxConcurrency
+		entry["max_waiting"] = limits.MaxWaiting
+		entry["wait_timeout_ms"] = int(limits.WaitTimeout / time.Millisecond)
+		if h.authManager != nil {
+			snapshot := h.authManager.AccountConcurrencySnapshot(auth.ID)
+			entry["account_concurrency"] = gin.H{
+				"active":         snapshot.Active,
+				"waiting":        snapshot.Waiting,
+				"limit":          snapshot.Limit,
+				"global_waiting": snapshot.GlobalWaiting,
+			}
+		}
 	}
 	return entry
 }

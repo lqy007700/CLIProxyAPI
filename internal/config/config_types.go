@@ -281,6 +281,10 @@ type RoutingConfig struct {
 	// When false, subagents are distributed across the credential pool via the fallback selector.
 	// Default: true. Ignored when SessionAffinity is false.
 	SessionAffinitySubagents *bool `yaml:"session-affinity-subagents,omitempty" json:"session-affinity-subagents,omitempty"`
+
+	// SessionAffinityCapacityPolicy controls whether a capacity-bound session may switch accounts.
+	// Supported values: "strict-wait" (default), "wait-then-switch".
+	SessionAffinityCapacityPolicy string `yaml:"session-affinity-capacity-policy,omitempty" json:"session-affinity-capacity-policy,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.

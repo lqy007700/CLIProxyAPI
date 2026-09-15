@@ -65,6 +65,16 @@ pprof:
 #   busy-retry-max: 1s
 #   max-limit: 1000000
 
+# Optional local admission control for Codex OAuth/file credentials. Disabled by default.
+# Home mode, plugin-provided credentials, API-key credentials, and direct HttpRequest calls bypass it.
+# Add max_concurrency, max_waiting, and wait_timeout_ms as top-level integers in each Codex auth JSON.
+# account-concurrency:
+#   enabled: false
+#   max-total-wait: "30s"
+#   max-account-switches: 2
+#   max-total-waiters: 10000
+#   store: "memory"
+
 # Credential in-flight observation snapshot contract.
 # credential-in-flight:
 #   snapshot-interval: 2s
@@ -227,6 +237,9 @@ routing:
   # credential is kept even if a higher-priority credential recovers. Credential priority
   # still decides cold bindings, requests without a session, and post-failover rebinding.
   session-affinity: false # default: false
+  # Keep an already-bound session on its account while waiting for capacity.
+  # wait-then-switch should only be enabled after encrypted continuation is validated across accounts.
+  session-affinity-capacity-policy: "strict-wait"
   # How long session-to-auth bindings are retained. Default: 1h
   session-affinity-ttl: "1h"
   # When true (default), subagents (child sessions with parent references) inherit and bind

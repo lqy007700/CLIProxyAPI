@@ -351,6 +351,9 @@ func (s *FileTokenStore) readAuthFiles(path, baseDir string) ([]*cliproxyauth.Au
 	if email, ok := metadata["email"].(string); ok && email != "" {
 		auth.Attributes["email"] = email
 	}
+	if errConcurrency := cliproxyauth.ApplyAccountConcurrencyMetadata(auth); errConcurrency != nil {
+		return nil, fmt.Errorf("invalid account concurrency in %s: %w", filepath.Base(path), errConcurrency)
+	}
 	cliproxyauth.ApplyCustomHeadersFromMetadata(auth)
 	return []*cliproxyauth.Auth{auth}, nil
 }

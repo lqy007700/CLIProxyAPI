@@ -371,6 +371,45 @@ func TestPatchAuthFileFields_RejectsInvalidWeights(t *testing.T) {
 	}
 }
 
+func TestPatchAuthFileFields_AccountConcurrencyValidatesAndSyncsRuntime(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	store := &memoryAuthStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	record := &coreauth.Auth{
+		ID: "codex.json", FileName: "codex.json", Provider: "codex",
+		Attributes: map[string]string{coreauth.AttributeAuthKind: coreauth.AuthKindOAuth},
+		Metadata:   map[string]any{"type": "codex", "access_token": "token"},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("Register() error = %v", errRegister)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{}, manager)
+	patch := func(fields string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		ctx.Request = httptest.NewRequest(http.MethodPatch, "/v0/management/auth-files/fields", strings.NewReader(`{"name":"codex.json",`+fields+`}`))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		h.PatchAuthFileFields(ctx)
+		return rec
+	}
+
+	if rec := patch(`"max_concurrency":2,"max_waiting":4,"wait_timeout_ms":800`); rec.Code != http.StatusOK {
+		t.Fatalf("valid patch status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	updated, _ := manager.GetByID("codex.json")
+	if updated.Attributes[coreauth.AttributeAccountMaxConcurrency] != "2" || updated.Attributes[coreauth.AttributeAccountMaxWaiting] != "4" || updated.Attributes[coreauth.AttributeAccountWaitTimeoutMS] != "800" {
+		t.Fatalf("runtime attributes = %#v", updated.Attributes)
+	}
+	if rec := patch(`"wait_timeout_ms":99`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid patch status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	unchanged, _ := manager.GetByID("codex.json")
+	if unchanged.Attributes[coreauth.AttributeAccountWaitTimeoutMS] != "800" {
+		t.Fatalf("invalid patch changed runtime attributes: %#v", unchanged.Attributes)
+	}
+}
+
 func TestPatchAuthFileFields_RequestRetryRoundTrip(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 

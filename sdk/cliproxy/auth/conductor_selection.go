@@ -1287,6 +1287,9 @@ func (m *Manager) shouldRetryAfterErrorWithAttempted(ctx context.Context, opts c
 	if errors.As(err, &homeBusy) && homeBusy != nil {
 		return 0, false
 	}
+	if isAccountConcurrencyAdmissionError(err) {
+		return 0, false
+	}
 	status := statusCodeFromError(err)
 	if status == http.StatusOK {
 		return 0, false

@@ -229,6 +229,9 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 		}
 	}
 	coreauth.ApplyCustomHeadersFromMetadata(a)
+	if errConcurrency := coreauth.ApplyAccountConcurrencyMetadata(a); errConcurrency != nil {
+		return nil, fmt.Errorf("invalid account concurrency in %s: %w", filepath.Base(fullPath), errConcurrency)
+	}
 	coreauth.SetOAuthModelAliasesAttribute(a, perAccountModelAliases)
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")
 	applyFingerprintProfileAttribute(a, metadata)

@@ -132,6 +132,46 @@ func TestFileSynthesizer_Synthesize_ValidAuthFile(t *testing.T) {
 	}
 }
 
+func TestFileSynthesizer_Synthesize_AccountConcurrencyAttributes(t *testing.T) {
+	tempDir := t.TempDir()
+	authData := map[string]any{
+		"type":            "codex",
+		"access_token":    "token",
+		"max_concurrency": 3,
+		"max_waiting":     5,
+		"wait_timeout_ms": 1200,
+	}
+	raw, errMarshal := json.Marshal(authData)
+	if errMarshal != nil {
+		t.Fatalf("marshal auth file: %v", errMarshal)
+	}
+	if errWrite := os.WriteFile(filepath.Join(tempDir, "codex.json"), raw, 0o600); errWrite != nil {
+		t.Fatalf("write auth file: %v", errWrite)
+	}
+
+	auths, errSynthesize := NewFileSynthesizer().Synthesize(&SynthesisContext{
+		Config:      &config.Config{},
+		AuthDir:     tempDir,
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	})
+	if errSynthesize != nil {
+		t.Fatalf("Synthesize() error = %v", errSynthesize)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("Synthesize() returned %d auths, want 1", len(auths))
+	}
+	if got := auths[0].Attributes[coreauth.AttributeAccountMaxConcurrency]; got != "3" {
+		t.Fatalf("max concurrency attribute = %q, want 3", got)
+	}
+	if got := auths[0].Attributes[coreauth.AttributeAccountMaxWaiting]; got != "5" {
+		t.Fatalf("max waiting attribute = %q, want 5", got)
+	}
+	if got := auths[0].Attributes[coreauth.AttributeAccountWaitTimeoutMS]; got != "1200" {
+		t.Fatalf("wait timeout attribute = %q, want 1200", got)
+	}
+}
+
 func TestFileSynthesizer_Synthesize_LegacyKimiFingerprintProfile(t *testing.T) {
 	tempDir := t.TempDir()
 	authData := map[string]any{

@@ -16,6 +16,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
+	accountconcurrency "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth/concurrency"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	cliproxysession "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/session"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
@@ -128,6 +129,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		resp, errHome := m.executeHome(ctx, normalized, req, opts, false)
 		return resp, unwrapExecutionBoundaryError(errHome)
 	}
+	ctx = withAccountConcurrencyRequestState(ctx)
 
 	defaultRequestRetry, maxRetryCredentials, maxWait := m.retrySettings()
 
@@ -187,6 +189,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 		resp, errHome := m.executeHome(ctx, normalized, req, opts, true)
 		return resp, unwrapExecutionBoundaryError(errHome)
 	}
+	ctx = withAccountConcurrencyRequestState(ctx)
 
 	defaultRequestRetry, maxRetryCredentials, maxWait := m.retrySettings()
 
@@ -240,6 +243,7 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 	if len(normalized) == 0 {
 		return nil, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
+	ctx = withAccountConcurrencyRequestState(ctx)
 
 	defaultRequestRetry, maxRetryCredentials, maxWait := m.retrySettings()
 
@@ -475,7 +479,16 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 	attempted := make(map[string]struct{})
 	var lastErr error
 	var upstreamErr error
+	var activeLease accountconcurrency.Lease
+	releaseActiveLease := func() {
+		if activeLease != nil {
+			activeLease.Release()
+			activeLease = nil
+		}
+	}
+	defer releaseActiveLease()
 	for {
+		releaseActiveLease()
 		if maxRetryCredentials > 0 && len(attempted) >= maxRetryCredentials {
 			if lastErr != nil {
 				return cliproxyexecutor.Response{}, preferredExecutionAttemptError(lastErr, upstreamErr)
@@ -488,8 +501,13 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			pickOpts = withHomeAuthCount(pickOpts, homeAuthCount)
 			pickOpts = withHomeExcludedAuthIDs(pickOpts, tried)
 		}
-		auth, executor, provider, errPick := m.pickNextMixed(ctx, providers, routeModel, pickOpts, tried)
+		pickOpts.EnsureMetadata()
+		auth, executor, provider, selectedLease, errPick := m.pickNextMixedWithAccountAdmission(ctx, providers, routeModel, pickOpts, tried)
+		activeLease = selectedLease
 		if errPick != nil {
+			if isAccountConcurrencyAdmissionError(errPick) {
+				return cliproxyexecutor.Response{}, errPick
+			}
 			if shouldReturnLastErrorOnPickFailure(homeMode, lastErr, errPick) {
 				return cliproxyexecutor.Response{}, preferredExecutionAttemptError(lastErr, upstreamErr)
 			}
@@ -688,7 +706,16 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 	attempted := make(map[string]struct{})
 	var lastErr error
 	var upstreamErr error
+	var activeLease accountconcurrency.Lease
+	releaseActiveLease := func() {
+		if activeLease != nil {
+			activeLease.Release()
+			activeLease = nil
+		}
+	}
+	defer releaseActiveLease()
 	for {
+		releaseActiveLease()
 		if maxRetryCredentials > 0 && len(attempted) >= maxRetryCredentials {
 			if lastErr != nil {
 				return cliproxyexecutor.Response{}, preferredExecutionAttemptError(lastErr, upstreamErr)
@@ -701,8 +728,13 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			pickOpts = withHomeAuthCount(pickOpts, homeAuthCount)
 			pickOpts = withHomeExcludedAuthIDs(pickOpts, tried)
 		}
-		auth, executor, provider, errPick := m.pickNextMixed(ctx, providers, routeModel, pickOpts, tried)
+		pickOpts.EnsureMetadata()
+		auth, executor, provider, selectedLease, errPick := m.pickNextMixedWithAccountAdmission(ctx, providers, routeModel, pickOpts, tried)
+		activeLease = selectedLease
 		if errPick != nil {
+			if isAccountConcurrencyAdmissionError(errPick) {
+				return cliproxyexecutor.Response{}, errPick
+			}
 			if shouldReturnLastErrorOnPickFailure(homeMode, lastErr, errPick) {
 				return cliproxyexecutor.Response{}, preferredExecutionAttemptError(lastErr, upstreamErr)
 			}
@@ -911,7 +943,16 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 	var lastErr error
 	var upstreamErr error
 	var roundTiming homeRetryRoundTiming
+	var activeLease accountconcurrency.Lease
+	releaseActiveLease := func() {
+		if activeLease != nil {
+			activeLease.Release()
+			activeLease = nil
+		}
+	}
+	defer releaseActiveLease()
 	for {
+		releaseActiveLease()
 		allowSameAuthRetry := homeMode && homeSameAuthRetryPending && lastHomeAuthID != "" && homeSameAuthRetries[lastHomeAuthID] == 0
 		if maxRetryCredentials > 0 && len(attempted) >= maxRetryCredentials && !allowSameAuthRetry {
 			if lastErr != nil {
@@ -943,9 +984,13 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 				provider = selection.Provider
 			}
 		} else {
-			auth, executor, provider, errPick = m.pickNextMixed(ctx, providers, routeModel, pickOpts, tried)
+			pickOpts.EnsureMetadata()
+			auth, executor, provider, activeLease, errPick = m.pickNextMixedWithAccountAdmission(ctx, providers, routeModel, pickOpts, tried)
 		}
 		if errPick != nil {
+			if isAccountConcurrencyAdmissionError(errPick) {
+				return nil, errPick
+			}
 			preferredErr := preferredExecutionAttemptError(lastErr, upstreamErr)
 			var homeCooldown *homeDispatchRetryAfterError
 			if homeMode && lastErr != nil && errors.As(errPick, &homeCooldown) && homeCooldown != nil {
@@ -1207,6 +1252,8 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			}
 			return wrapHomeStream(ctx, streamResult, selection, releaseAttempt), nil
 		}
+		streamResult = wrapStreamResultWithAccountLease(ctx, streamResult, activeLease)
+		activeLease = nil
 		return streamResult, nil
 	}
 }

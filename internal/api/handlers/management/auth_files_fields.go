@@ -363,6 +363,10 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	}
 	if changed {
 		syncAuthFileMetadataFields(targetAuth, touchedRoots)
+		if errConcurrency := coreauth.ApplyAccountConcurrencyMetadata(targetAuth); errConcurrency != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errConcurrency.Error()})
+			return
+		}
 	}
 
 	if !changed {

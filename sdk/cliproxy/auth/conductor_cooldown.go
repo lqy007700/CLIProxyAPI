@@ -151,6 +151,12 @@ func (m *Manager) setConfigSnapshotLocked(cfg *internalconfig.Config) bool {
 	} else {
 		cfg = cfg.CloneForRuntime()
 	}
+	if m.accountConcurrency != nil {
+		m.accountConcurrency.SetMaxTotalWaiters(cfg.AccountConcurrency.MaxTotalWaiters)
+		if !cfg.AccountConcurrency.Enabled {
+			m.accountConcurrency.BypassWaiters()
+		}
+	}
 	m.mu.RLock()
 	oldCooldownStore := m.cooldownStore
 	m.mu.RUnlock()

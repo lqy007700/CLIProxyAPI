@@ -22,6 +22,9 @@ type Config struct {
 	// CredentialConcurrency contains Home-authoritative credential lifecycle settings.
 	CredentialConcurrency CredentialConcurrencyConfig `yaml:"credential-concurrency" json:"credential-concurrency"`
 
+	// AccountConcurrency controls optional local OAuth account admission and waiting.
+	AccountConcurrency AccountConcurrencyConfig `yaml:"account-concurrency" json:"account-concurrency"`
+
 	// CredentialInFlight configures credential observation snapshots.
 	CredentialInFlight CredentialInFlightConfig `yaml:"credential-in-flight" json:"credential-in-flight"`
 

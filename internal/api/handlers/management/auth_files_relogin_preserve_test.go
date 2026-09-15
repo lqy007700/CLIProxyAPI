@@ -70,19 +70,22 @@ func TestSaveTokenRecord_PreservesExistingAuthFileSettings(t *testing.T) {
 
 	// User configured fields on existing OAuth account
 	initialContent := map[string]any{
-		"type":          "codex",
-		"email":         "user@example.com",
-		"access_token":  "old-access",
-		"refresh_token": "old-refresh",
-		"prefix":        "custom-prefix",
-		"websockets":    false,
-		"note":          "my important account",
-		"proxy_url":     "http://127.0.0.1:8080",
-		"weight":        float64(5),
-		"headers":       map[string]any{"User-Agent": "Custom"},
-		"models":        []any{"o3-mini"},
-		"thinking":      map[string]any{"enabled": true},
-		"priority":      float64(2),
+		"type":            "codex",
+		"email":           "user@example.com",
+		"access_token":    "old-access",
+		"refresh_token":   "old-refresh",
+		"prefix":          "custom-prefix",
+		"websockets":      false,
+		"note":            "my important account",
+		"proxy_url":       "http://127.0.0.1:8080",
+		"weight":          float64(5),
+		"headers":         map[string]any{"User-Agent": "Custom"},
+		"models":          []any{"o3-mini"},
+		"thinking":        map[string]any{"enabled": true},
+		"priority":        float64(2),
+		"max_concurrency": float64(2),
+		"max_waiting":     float64(6),
+		"wait_timeout_ms": float64(8000),
 	}
 	raw, errMarshal := json.Marshal(initialContent)
 	if errMarshal != nil {
@@ -170,6 +173,9 @@ func TestSaveTokenRecord_PreservesExistingAuthFileSettings(t *testing.T) {
 	}
 	if saved["priority"] != float64(2) {
 		t.Errorf("priority = %v, want 2", saved["priority"])
+	}
+	if saved["max_concurrency"] != float64(2) || saved["max_waiting"] != float64(6) || saved["wait_timeout_ms"] != float64(8000) {
+		t.Errorf("account concurrency settings were not preserved: %#v", saved)
 	}
 }
 

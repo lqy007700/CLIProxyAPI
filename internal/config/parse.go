@@ -37,12 +37,20 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.Pprof.Addr = DefaultPprofAddr
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	cfg.CredentialInFlight = DefaultCredentialInFlightConfig()
+	cfg.AccountConcurrency = DefaultAccountConcurrencyConfig()
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config payload: %w", err)
 	}
 
 	cfg.CredentialConcurrency = cfg.CredentialConcurrency.WithDefaults()
+	cfg.AccountConcurrency = cfg.AccountConcurrency.WithDefaults()
+	if errValidate := ValidateAccountConcurrency(cfg.AccountConcurrency); errValidate != nil {
+		return nil, errValidate
+	}
+	if errValidate := NormalizeSessionAffinityCapacityPolicy(&cfg); errValidate != nil {
+		return nil, errValidate
+	}
 	if errValidate := cfg.CredentialInFlight.Validate(); errValidate != nil {
 		return nil, errValidate
 	}

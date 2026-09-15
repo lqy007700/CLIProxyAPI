@@ -123,6 +123,62 @@ func TestListAuthFilesFromDisk_IncludesWebsockets(t *testing.T) {
 	}
 }
 
+func TestListAuthFiles_IncludesAccountConcurrencyFromManager(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	authDir := t.TempDir()
+	fileName := "codex-concurrency.json"
+	filePath := filepath.Join(authDir, fileName)
+	if errWrite := os.WriteFile(filePath, []byte(`{"type":"codex","access_token":"token","max_concurrency":2,"max_waiting":4,"wait_timeout_ms":800}`), 0o600); errWrite != nil {
+		t.Fatalf("failed to write auth file: %v", errWrite)
+	}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.SetConfig(&config.Config{AccountConcurrency: config.AccountConcurrencyConfig{
+		Enabled: true, MaxTotalWait: "30s", MaxAccountSwitches: 2, MaxTotalWaiters: 100, Store: "memory",
+	}})
+	record := &coreauth.Auth{
+		ID: fileName, FileName: fileName, Provider: "codex", Status: coreauth.StatusActive,
+		Attributes: map[string]string{
+			coreauth.AttributePath:                  filePath,
+			coreauth.AttributeAuthKind:              coreauth.AuthKindOAuth,
+			coreauth.AttributeAccountMaxConcurrency: "2",
+			coreauth.AttributeAccountMaxWaiting:     "4",
+			coreauth.AttributeAccountWaitTimeoutMS:  "800",
+		},
+		Metadata: map[string]any{"type": "codex", "access_token": "token"},
+	}
+	if _, errRegister := manager.Register(context.Background(), record); errRegister != nil {
+		t.Fatalf("failed to register auth record: %v", errRegister)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+	h.tokenStore = &memoryAuthStore{}
+
+	entry := firstAuthFileEntry(t, h)
+	if entry["max_concurrency"] != float64(2) || entry["max_waiting"] != float64(4) || entry["wait_timeout_ms"] != float64(800) {
+		t.Fatalf("account concurrency fields = %#v", entry)
+	}
+	snapshot, ok := entry["account_concurrency"].(map[string]any)
+	if !ok {
+		t.Fatalf("account_concurrency snapshot = %#v", entry["account_concurrency"])
+	}
+	if snapshot["active"] != float64(0) || snapshot["waiting"] != float64(0) || snapshot["limit"] != float64(2) {
+		t.Fatalf("account_concurrency snapshot = %#v", snapshot)
+	}
+}
+
+func TestListAuthFilesFromDisk_IncludesAccountConcurrency(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	authDir := t.TempDir()
+	filePath := filepath.Join(authDir, "codex-concurrency.json")
+	if errWrite := os.WriteFile(filePath, []byte(`{"type":"codex","max_concurrency":2,"max_waiting":4,"wait_timeout_ms":800}`), 0o600); errWrite != nil {
+		t.Fatalf("failed to write auth file: %v", errWrite)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	entry := firstAuthFileEntry(t, h)
+	if entry["max_concurrency"] != float64(2) || entry["max_waiting"] != float64(4) || entry["wait_timeout_ms"] != float64(800) {
+		t.Fatalf("account concurrency fields = %#v", entry)
+	}
+}
+
 func firstAuthFileEntry(t *testing.T, h *Handler) map[string]any {
 	t.Helper()
 

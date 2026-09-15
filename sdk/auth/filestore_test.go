@@ -206,6 +206,34 @@ func TestFileTokenStoreNormalizesLegacyCredentialMetadata(t *testing.T) {
 	})
 }
 
+func TestFileTokenStoreLoadsAccountConcurrencyAttributes(t *testing.T) {
+	baseDir := t.TempDir()
+	path := filepath.Join(baseDir, "codex-concurrency.json")
+	data := []byte(`{"type":"codex","access_token":"token","max_concurrency":2,"max_waiting":4,"wait_timeout_ms":900}`)
+	if errWrite := os.WriteFile(path, data, 0o600); errWrite != nil {
+		t.Fatalf("write auth file: %v", errWrite)
+	}
+	store := NewFileTokenStore()
+	store.SetBaseDir(baseDir)
+
+	auths, errList := store.List(context.Background())
+	if errList != nil {
+		t.Fatalf("List() error = %v", errList)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("List() returned %d auths, want 1", len(auths))
+	}
+	if got := auths[0].Attributes[cliproxyauth.AttributeAccountMaxConcurrency]; got != "2" {
+		t.Fatalf("max concurrency attribute = %q, want 2", got)
+	}
+	if got := auths[0].Attributes[cliproxyauth.AttributeAccountMaxWaiting]; got != "4" {
+		t.Fatalf("max waiting attribute = %q, want 4", got)
+	}
+	if got := auths[0].Attributes[cliproxyauth.AttributeAccountWaitTimeoutMS]; got != "900" {
+		t.Fatalf("wait timeout attribute = %q, want 900", got)
+	}
+}
+
 func TestFileTokenStoreSaveRejectsInvalidWeight(t *testing.T) {
 	baseDir := t.TempDir()
 	store := NewFileTokenStore()
